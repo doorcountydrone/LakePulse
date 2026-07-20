@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    html, body, #map { height: 100%; margin: 0; padding: 0; background: #d9e6e4; }
+    .temp-marker {
+      border-radius: 50%;
+      border: 2px solid rgba(232,244,242,0.95);
+      box-shadow: 0 1px 6px rgba(11,61,74,0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #08303a;
+      font: 700 11px/1 system-ui, sans-serif;
+    }
+    .temp-marker.focused {
+      width: 36px !important;
+      height: 36px !important;
+      border-width: 3px;
+      box-shadow: 0 0 0 3px rgba(19,218,249,0.75), 0 2px 10px rgba(0,0,0,0.45);
+      font-size: 13px;
+    }
+    .spot-marker {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: rgba(5,26,39,0.92);
+      border: 2px solid #13daf9;
+      box-shadow: 0 0 0 3px rgba(253,171,1,0.45), 0 2px 10px rgba(0,0,0,0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      line-height: 1;
+    }
+    .leaflet-control-zoom a {
+      background: rgba(11,61,74,0.92) !important;
+      color: #e8f4f2 !important;
+      border: 1px solid rgba(127,183,180,0.35) !important;
+    }
+    .leaflet-control-attribution {
+      background: rgba(11,61,74,0.82) !important;
+      color: rgba(232,244,242,0.75) !important;
+      max-width: 70vw;
+      font-size: 10px;
+    }
+    .leaflet-control-attribution a { color: #7fb7b4 !important; }
+    .leaflet-popup-content-wrapper {
+      border-radius: 14px;
+      background: #0f4654;
+      color: #e8f4f2;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      font: 14px/1.35 system-ui, sans-serif;
+    }
+    .leaflet-popup-tip { background: #0f4654; }
+    .leaflet-popup-close-button { color: #7fb7b4 !important; }
+    .popup-temp {
+      font-size: 28px;
+      font-weight: 700;
+      color: #d97b4a;
+      margin: 4px 0 2px;
+    }
+    .popup-meta {
+      color: rgba(232,244,242,0.75);
+      font-size: 12px;
+    }
+    .popup-title { font-weight: 700; margin-bottom: 4px; color: #fff; }
+    .popup-line { margin: 2px 0; color: rgba(232,244,242,0.85); }
+    .popup-accent { color: #d97b4a; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    // Must match the PNG request window in SatelliteThermalMapScreen.kt.
+    const QUERY_BOUNDS = [[41.0, -92.4], [49.0, -76.0]];
+    // Slight SE registration, with a bit more south.
+    const OVERLAY_SHIFT_LAT = -0.06;
+    const OVERLAY_SHIFT_LON = 0.045;
+    const DATA_BOUNDS = [
+      [QUERY_BOUNDS[0][0] + OVERLAY_SHIFT_LAT, QUERY_BOUNDS[0][1] + OVERLAY_SHIFT_LON],
+      [QUERY_BOUNDS[1][0] + OVERLAY_SHIFT_LAT, QUERY_BOUNDS[1][1] + OVERLAY_SHIFT_LON]
+    ];
+    const VIEW_BOUNDS = L.latLngBounds(QUERY_BOUNDS).pad(0.04);
+
+    const map = L.map('map', {
+      zoomControl: false,
+      attributionControl: true,
+      maxZoom: 16
+    });
+
+    map.createPane('basemap');
+    map.getPane('basemap').style.zIndex = 200;
+    map.createPane('thermal');
+    map.getPane('thermal').style.zIndex = 350;
+    map.createPane('labels');
+    map.getPane('labels').style.zIndex = 450;
+    map.getPane('labels').style.pointerEvents = 'none';
+    map.createPane('buoys');
+    map.getPane('buoys').style.zIndex = 550;
+
+    function chromeFitOptions() {
+      return {
+        paddingTopLeft: L.point(36, 130),
+        paddingBottomRight: L.point(36, 200),
+        maxZoom: 6
+      };
+    }
+
+    map.fitBounds(VIEW_BOUNDS, chromeFitOptions());
+    setTimeout(function () {
+      map.invalidateSize();
+      map.fitBounds(VIEW_BOUNDS, chromeFitOptions());
+    }, 250);
+
+    const streetLayer = L.tileLayer(
+      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png',
+      {
+        maxZoom: 16,
+        maxNativeZoom: 10,
+        pane: 'basemap',
+        attribution: '&copy; OpenStreetMap &copy; CARTO'
+      }
+    );
+
+    const labelLayer = L.tileLayer(
+      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png',
+      {
+        maxZoom: 16,
+        maxNativeZoom: 10,
+        pane: 'labels',
+        attribution: ''
+      }
+    );
+
+    // Free NOAA ENC via ECDIS Display Service (includes depth soundings / contours).
+    const chartLayer = L.tileLayer.wms(
+      'https://gis.charttools.noaa.gov/arcgis/rest/services/MCS/ENCOnline/MapServer/exts/MaritimeChartService/WMSServer',
+      {
+        layers: '0,1,2,3,4,5,6',
+        format: 'image/png',
+        transparent: true,
+        version: '1.3.0',
+        uppercase: true,
+        maxZoom: 16,
+        minZoom: 6,
+        pane: 'basemap',
+        attribution: 'NOAA ENC · not for navigation'
+      }
+    );
+
+    let currentBasemap = 'map';
+    let thermalOpacity = 0.95;
+    streetLayer.addTo(map);
+    labelLayer.addTo(map);
+
+    function setThermalOpacity(value) {
+      const v = Math.max(0, Math.min(1, Number(value)));
+      if (isNaN(v)) return thermalOpacity;
+      thermalOpacity = v;
+      if (thermalLayer) thermalLayer.setOpacity(thermalOpacity);
+      return thermalOpacity;
+    }
+
+    function setBasemap(mode) {
+      const next = (mode === 'chart') ? 'chart' : 'map';
+      if (next === currentBasemap) {
+        if (thermalLayer) thermalLayer.bringToFront();
+        if (buoyLayer) buoyLayer.bringToFront();
+        return currentBasemap;
+      }
+      if (next === 'chart') {
+        if (map.hasLayer(streetLayer)) map.removeLayer(streetLayer);
+        if (map.hasLayer(labelLayer)) map.removeLayer(labelLayer);
+        if (!map.hasLayer(chartLayer)) chartLayer.addTo(map);
+      } else {
+        if (map.hasLayer(chartLayer)) map.removeLayer(chartLayer);
+        if (!map.hasLayer(streetLayer)) streetLayer.addTo(map);
+        if (!map.hasLayer(labelLayer)) labelLayer.addTo(map);
+      }
+      currentBasemap = next;
+      if (thermalLayer) thermalLayer.bringToFront();
+      if (buoyLayer) buoyLayer.bringToFront();
+      return currentBasemap;
+    }
+
+    let thermalLayer = null;
+    let tapMarker = null;
+    let requestId = 0;
+    const buoyLayer = L.layerGroup().addTo(map);
+    const markersById = {};
+
+    function tempColor(tempF) {
+      if (tempF == null || isNaN(tempF)) return '#6B1D5A';
+      const t = Math.max(41, Math.min(82, tempF));
+      const ratio = (t - 41) / 41;
+      const stops = [
+        [0.00, [4, 35, 51]],
+        [0.17, [44, 30, 91]],
+        [0.33, [107, 29, 90]],
+        [0.50, [178, 42, 74]],
+        [0.67, [228, 93, 43]],
+        [0.83, [244, 162, 97]],
+        [1.00, [247, 231, 161]]
+      ];
+      let i = 0;
+      while (i < stops.length - 1 && ratio > stops[i + 1][0]) i++;
+      const a = stops[i];
+      const b = stops[Math.min(i + 1, stops.length - 1)];
+      const span = Math.max(0.0001, b[0] - a[0]);
+      const local = (ratio - a[0]) / span;
+      const rgb = a[1].map((v, idx) => Math.round(v + (b[1][idx] - v) * local));
+      return 'rgb(' + rgb.join(',') + ')';
+    }
+
+    function tempLabelColor(tempF) {
+      if (tempF == null || isNaN(tempF)) return '#e8f4f2';
+      return tempF >= 74 ? '#08303a' : '#e8f4f2';
+    }
+
+    function setObservations(obs, focusId) {
+      buoyLayer.clearLayers();
+      Object.keys(markersById).forEach(function (key) { delete markersById[key]; });
+      if (!obs || !obs.length) return;
+
+      obs.forEach(function (item) {
+        const temp = item.tempF;
+        const color = tempColor(temp);
+        const labelColor = tempLabelColor(temp);
+        const label = (temp == null) ? '—' : Math.round(temp);
+        const focused = focusId && String(item.id) === String(focusId);
+        const size = focused ? 36 : 28;
+        const icon = L.divIcon({
+          className: '',
+          html: '<div class="temp-marker' + (focused ? ' focused' : '') +
+            '" style="width:' + size + 'px;height:' + size + 'px;background:' + color +
+            ';color:' + labelColor + '">' + label + '</div>',
+          iconSize: [size, size],
+          iconAnchor: [size / 2, size / 2]
+        });
+
+        const wind = item.windMph != null ? Math.round(item.windMph) + ' mph' : '—';
+        const gust = item.windGustMph != null ? Math.round(item.windGustMph) + ' mph' : '—';
+        const waves = item.waveHeightFt != null ? item.waveHeightFt.toFixed(1) + ' ft' : '—';
+        const dir = item.windDirLabel || '—';
+        const when = item.observedAt || 'Unknown time';
+
+        const html =
+          '<div class="popup-title">Live buoy ' + item.id + '</div>' +
+          '<div class="popup-line popup-accent">Water ' + (temp == null ? '—' : Math.round(temp) + '°F') + '</div>' +
+          '<div class="popup-line">Wind ' + wind + ' ' + dir + '</div>' +
+          '<div class="popup-line">Gust ' + gust + '</div>' +
+          '<div class="popup-line">Waves ' + waves + '</div>' +
+          '<div class="popup-line">' + when + '</div>';
+
+        const marker = L.marker([item.lat, item.lon], { icon: icon, pane: 'buoys' });
+        marker.bindPopup(html);
+        marker.addTo(buoyLayer);
+        markersById[String(item.id)] = marker;
+      });
+
+      buoyLayer.bringToFront();
+      if (focusId) focusBuoy(focusId);
+    }
+
+    function focusBuoy(id) {
+      const marker = markersById[String(id)];
+      if (!marker) return false;
+      map.setView(marker.getLatLng(), 9, { animate: true });
+      marker.openPopup();
+      if (window.SatelliteBridge && SatelliteBridge.onBuoyFocused) {
+        SatelliteBridge.onBuoyFocused(String(id));
+      }
+      return true;
+    }
+
+    let spotMarker = null;
+
+    function focusSpot(lat, lon, label) {
+      const latN = Number(lat);
+      const lonN = Number(lon);
+      if (isNaN(latN) || isNaN(lonN)) return false;
+      if (spotMarker) {
+        map.removeLayer(spotMarker);
+        spotMarker = null;
+      }
+      const title = label || 'Fishing spot';
+      const icon = L.divIcon({
+        className: '',
+        html: '<div class="spot-marker">🎣</div>',
+        iconSize: [36, 36],
+        iconAnchor: [18, 18]
+      });
+      spotMarker = L.marker([latN, lonN], { icon: icon, pane: 'buoys' });
+      spotMarker.bindPopup(
+        '<div class="popup-title">' + title + '</div>' +
+        '<div class="popup-meta">DNR fishing spot · chart view</div>'
+      );
+      spotMarker.addTo(map);
+      map.setView([latN, lonN], 11, { animate: true });
+      spotMarker.openPopup();
+      if (window.SatelliteBridge && SatelliteBridge.onSpotFocused) {
+        SatelliteBridge.onSpotFocused();
+      }
+      return true;
+    }
+
+    window.applyThermalUrl = function (url) {
+      if (!url) return;
+      const next = L.imageOverlay(url, DATA_BOUNDS, {
+        opacity: thermalOpacity,
+        interactive: false,
+        pane: 'thermal',
+        attribution: 'NOAA GLSEA ACSPO via CoastWatch Great Lakes'
+      });
+      if (thermalLayer) {
+        map.removeLayer(thermalLayer);
+      }
+      thermalLayer = next;
+      next.addTo(map);
+      if (buoyLayer) buoyLayer.bringToFront();
+    };
+
+    window.setBasemap = setBasemap;
+    window.setThermalOpacity = setThermalOpacity;
+    window.setObservations = setObservations;
+    window.focusBuoy = focusBuoy;
+    window.focusSpot = focusSpot;
+
+    function celsiusToFahrenheit(c) {
+      return c * 9 / 5 + 32;
+    }
+
+    function formatCoord(value, isLat) {
+      const abs = Math.abs(value).toFixed(2);
+      if (isLat) {
+        return abs + '°' + (value >= 0 ? 'N' : 'S');
+      }
+      return abs + '°' + (value >= 0 ? 'E' : 'W');
+    }
+
+    function queryTempAt(latlng) {
+      const id = ++requestId;
+
+      if (tapMarker) {
+        map.removeLayer(tapMarker);
+      }
+      tapMarker = L.circleMarker(latlng, {
+        radius: 8,
+        color: '#0b3d4a',
+        weight: 2,
+        fillColor: '#d97b4a',
+        fillOpacity: 0.95
+      }).addTo(map);
+      tapMarker.bindPopup('Reading temperature…').openPopup();
+
+      if (!window.SatelliteBridge || !SatelliteBridge.fetchPointTemp) {
+        tapMarker.setPopupContent('Temperature lookup unavailable').openPopup();
+        return;
+      }
+
+      SatelliteBridge.fetchPointTemp(latlng.lat, latlng.lng, id);
+    }
+
+    window.onPointTempResult = function (id, tempC, observedAt, liveBuoyLine, errorMessage) {
+      if (id !== requestId || !tapMarker) return;
+
+      if (errorMessage) {
+        tapMarker.setPopupContent('Couldn’t load temperature for this spot').openPopup();
+        return;
+      }
+
+      const lat = tapMarker.getLatLng().lat;
+      const lon = tapMarker.getLatLng().lng;
+      const coords =
+        '<div class="popup-meta">' + formatCoord(lat, true) + ', ' + formatCoord(lon, false) + '</div>';
+
+      if (tempC == null || typeof tempC !== 'number' || isNaN(tempC)) {
+        tapMarker.setPopupContent(
+          coords +
+          '<div>No satellite water temperature here</div>' +
+          '<div class="popup-meta">Likely land or missing satellite coverage</div>' +
+          (liveBuoyLine ? '<div class="popup-meta" style="margin-top:6px">' + liveBuoyLine + '</div>' : '')
+        ).openPopup();
+        return;
+      }
+
+      const tempF = Math.round(celsiusToFahrenheit(tempC));
+      tapMarker.setPopupContent(
+        coords +
+        '<div class="popup-temp">' + tempF + '°F</div>' +
+        '<div class="popup-meta">Satellite analysis · NOAA GLSEA</div>' +
+        (observedAt ? '<div class="popup-meta">' + observedAt + '</div>' : '') +
+        (liveBuoyLine
+          ? '<div class="popup-meta" style="margin-top:6px;color:#d97b4a">' + liveBuoyLine + '</div>'
+          : '<div class="popup-meta" style="margin-top:6px">Tap a colored buoy pin for a live NDBC reading</div>')
+      ).openPopup();
+    };
+
+    map.on('click', function (e) {
+      queryTempAt(e.latlng);
+    });
+  </script>
+</body>
+</html>

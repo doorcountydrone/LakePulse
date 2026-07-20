@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    html, body, #map { height: 100%; margin: 0; padding: 0; background: #d9e6e4; }
+    .temp-marker {
+      border-radius: 50%;
+      border: 2px solid rgba(232,244,242,0.95);
+      box-shadow: 0 1px 6px rgba(11,61,74,0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #08303a;
+      font: 700 11px/1 system-ui, sans-serif;
+    }
+    .temp-marker.focused {
+      width: 36px !important;
+      height: 36px !important;
+      border-width: 3px;
+      box-shadow: 0 0 0 3px rgba(127,183,180,0.7), 0 2px 10px rgba(0,0,0,0.45);
+      font-size: 13px;
+    }
+    .leaflet-control-zoom a {
+      background: rgba(11,61,74,0.92) !important;
+      color: #e8f4f2 !important;
+      border: 1px solid rgba(127,183,180,0.35) !important;
+    }
+    .leaflet-control-attribution {
+      background: rgba(11,61,74,0.82) !important;
+      color: rgba(232,244,242,0.75) !important;
+      max-width: 70vw;
+      font-size: 10px;
+    }
+    .leaflet-control-attribution a { color: #7fb7b4 !important; }
+    .leaflet-popup-content-wrapper {
+      border-radius: 14px;
+      background: #0f4654;
+      color: #e8f4f2;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      font: 14px/1.35 system-ui, sans-serif;
+    }
+    .leaflet-popup-tip { background: #0f4654; }
+    .leaflet-popup-close-button { color: #7fb7b4 !important; }
+    .popup-title { font-weight: 700; margin-bottom: 4px; color: #fff; }
+    .popup-line { margin: 2px 0; color: rgba(232,244,242,0.85); }
+    .popup-accent { color: #d97b4a; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    const map = L.map('map', {
+      zoomControl: false,
+      attributionControl: true,
+      maxZoom: 16
+    }).setView([44.5, -84.5], 6);
+
+    // Leave room for Compose header + legend so Door County / Green Bay aren't clipped.
+    function chromeFitOptions(maxZoom) {
+      return {
+        paddingTopLeft: L.point(40, 140),
+        paddingBottomRight: L.point(40, 210),
+        maxZoom: maxZoom
+      };
+    }
+
+    // Anchor points so Wisconsin's Door County "thumb" stays in frame.
+    const DOOR_COUNTY_TIP = [45.42, -86.80];
+    const GREEN_BAY_MOUTH = [44.80, -87.40];
+    const WASHINGTON_ISLAND = [45.40, -86.90];
+
+    const streetLayer = L.tileLayer(
+      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+      {
+        maxZoom: 16,
+        maxNativeZoom: 12,
+        attribution: '&copy; OpenStreetMap &copy; CARTO'
+      }
+    );
+
+    // Free NOAA ENC via ECDIS Display Service (includes depth soundings / contours).
+    // Layer 2 = Depths, currents, etc.
+    const chartLayer = L.tileLayer.wms(
+      'https://gis.charttools.noaa.gov/arcgis/rest/services/MCS/ENCOnline/MapServer/exts/MaritimeChartService/WMSServer',
+      {
+        layers: '0,1,2,3,4,5,6',
+        format: 'image/png',
+        transparent: true,
+        version: '1.3.0',
+        uppercase: true,
+        maxZoom: 16,
+        minZoom: 6,
+        attribution: 'NOAA ENC · not for navigation'
+      }
+    );
+
+    let currentBasemap = 'map';
+    streetLayer.addTo(map);
+
+    let layer = L.layerGroup().addTo(map);
+    const markersById = {};
+
+    function setBasemap(mode) {
+      const next = (mode === 'chart') ? 'chart' : 'map';
+      if (next === currentBasemap) return currentBasemap;
+      if (next === 'chart') {
+        if (map.hasLayer(streetLayer)) map.removeLayer(streetLayer);
+        if (!map.hasLayer(chartLayer)) chartLayer.addTo(map);
+      } else {
+        if (map.hasLayer(chartLayer)) map.removeLayer(chartLayer);
+        if (!map.hasLayer(streetLayer)) streetLayer.addTo(map);
+      }
+      currentBasemap = next;
+      if (layer) layer.bringToFront();
+      return currentBasemap;
+    }
+
+    function tempColor(tempF) {
+      if (tempF == null || isNaN(tempF)) return '#6B1D5A';
+      const t = Math.max(41, Math.min(82, tempF));
+      const ratio = (t - 41) / 41;
+      // Match satellite KT_thermal (cold navy/purple → warm amber).
+      const stops = [
+        [0.00, [4, 35, 51]],
+        [0.17, [44, 30, 91]],
+        [0.33, [107, 29, 90]],
+        [0.50, [178, 42, 74]],
+        [0.67, [228, 93, 43]],
+        [0.83, [244, 162, 97]],
+        [1.00, [247, 231, 161]]
+      ];
+      let i = 0;
+      while (i < stops.length - 1 && ratio > stops[i + 1][0]) i++;
+      const a = stops[i];
+      const b = stops[Math.min(i + 1, stops.length - 1)];
+      const span = Math.max(0.0001, b[0] - a[0]);
+      const local = (ratio - a[0]) / span;
+      const rgb = a[1].map((v, idx) => Math.round(v + (b[1][idx] - v) * local));
+      return 'rgb(' + rgb.join(',') + ')';
+    }
+
+    function tempLabelColor(tempF) {
+      if (tempF == null || isNaN(tempF)) return '#e8f4f2';
+      // Light amber end of the scale needs dark type; cooler stops use mist.
+      return tempF >= 74 ? '#08303a' : '#e8f4f2';
+    }
+
+    function setObservations(obs, focusId) {
+      layer.clearLayers();
+      Object.keys(markersById).forEach(function (key) { delete markersById[key]; });
+      if (!obs || !obs.length) return;
+
+      const bounds = [];
+      obs.forEach(function (item) {
+        const temp = item.tempF;
+        const color = tempColor(temp);
+        const labelColor = tempLabelColor(temp);
+        const label = (temp == null) ? '—' : Math.round(temp);
+        const focused = focusId && String(item.id) === String(focusId);
+        const size = focused ? 36 : 28;
+        const icon = L.divIcon({
+          className: '',
+          html: '<div class="temp-marker' + (focused ? ' focused' : '') +
+            '" style="width:' + size + 'px;height:' + size + 'px;background:' + color +
+            ';color:' + labelColor + '">' + label + '</div>',
+          iconSize: [size, size],
+          iconAnchor: [size / 2, size / 2]
+        });
+
+        const wind = item.windMph != null ? Math.round(item.windMph) + ' mph' : '—';
+        const gust = item.windGustMph != null ? Math.round(item.windGustMph) + ' mph' : '—';
+        const waves = item.waveHeightFt != null ? item.waveHeightFt.toFixed(1) + ' ft' : '—';
+        const dir = item.windDirLabel || '—';
+        const when = item.observedAt || 'Unknown time';
+
+        const html =
+          '<div class="popup-title">Buoy ' + item.id + '</div>' +
+          '<div class="popup-line popup-accent">Water ' + (temp == null ? '—' : Math.round(temp) + '°F') + '</div>' +
+          '<div class="popup-line">Wind ' + wind + ' ' + dir + '</div>' +
+          '<div class="popup-line">Gust ' + gust + '</div>' +
+          '<div class="popup-line">Waves ' + waves + '</div>' +
+          '<div class="popup-line">' + when + '</div>';
+
+        const marker = L.marker([item.lat, item.lon], { icon: icon });
+        marker.bindPopup(html);
+        marker.addTo(layer);
+        markersById[String(item.id)] = marker;
+        bounds.push([item.lat, item.lon]);
+      });
+
+      if (focusId && focusBuoy(focusId)) {
+        return;
+      }
+
+      const frame = bounds.concat([DOOR_COUNTY_TIP, GREEN_BAY_MOUTH, WASHINGTON_ISLAND]);
+      if (frame.length > 1) {
+        map.fitBounds(frame, chromeFitOptions(6));
+      } else if (frame.length === 1) {
+        map.setView(frame[0], 7);
+      }
+    }
+
+    function focusBuoy(id) {
+      const marker = markersById[String(id)];
+      if (!marker) return false;
+      map.setView(marker.getLatLng(), 9, { animate: true });
+      marker.openPopup();
+      if (window.BuoyMapBridge && BuoyMapBridge.onFocused) {
+        BuoyMapBridge.onFocused(String(id));
+      }
+      return true;
+    }
+
+    window.setObservations = setObservations;
+    window.focusBuoy = focusBuoy;
+    window.setBasemap = setBasemap;
+  </script>
+</body>
+</html>
