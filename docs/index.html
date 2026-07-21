@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LakePulse — Download</title>
+  <meta name="description" content="Download the LakePulse app for Great Lakes conditions." />
+  <meta property="og:title" content="LakePulse" />
+  <meta property="og:description" content="Great Lakes conditions — tap to download the Android app." />
+  <meta property="og:image" content="lakepulse_logo.png" />
+  <link rel="icon" href="lakepulse_logo.png" />
+  <style>
+    :root {
+      --navy: #051a27;
+      --deep: #0b2235;
+      --blue: #0a416d;
+      --cyan: #13daf9;
+      --gold: #fdab01;
+      --foam: #e8f4f2;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: var(--foam);
+      background: var(--navy);
+    }
+
+    body {
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      padding: 1.5rem;
+      background:
+        linear-gradient(180deg, rgba(5, 26, 39, 0.72) 0%, rgba(5, 26, 39, 0.88) 55%, rgba(5, 26, 39, 0.95) 100%),
+        url("lakepulse_background.png") center / cover no-repeat;
+    }
+
+    main {
+      width: min(22rem, 100%);
+      text-align: center;
+    }
+
+    .logo {
+      width: min(11rem, 70vw);
+      height: auto;
+      border-radius: 1.5rem;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+      margin-bottom: 1.25rem;
+    }
+
+    h1 {
+      margin: 0 0 0.35rem;
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    h1 span {
+      color: var(--cyan);
+    }
+
+    p {
+      margin: 0 0 1.5rem;
+      color: rgba(232, 244, 242, 0.85);
+      line-height: 1.45;
+      font-size: 1rem;
+    }
+
+    .download {
+      display: inline-block;
+      width: 100%;
+      padding: 0.95rem 1.25rem;
+      border-radius: 0.85rem;
+      background: linear-gradient(135deg, var(--cyan), #0a9bb8);
+      color: var(--navy);
+      font-weight: 700;
+      font-size: 1.05rem;
+      text-decoration: none;
+      box-shadow: 0 8px 24px rgba(19, 218, 249, 0.28);
+    }
+
+    .download:active {
+      transform: scale(0.98);
+    }
+
+    .hint {
+      margin-top: 1rem;
+      font-size: 0.8rem;
+      color: rgba(232, 244, 242, 0.55);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <img class="logo" src="lakepulse_logo.png" alt="LakePulse" width="220" height="220" />
+    <h1>Lake<span>Pulse</span></h1>
+    <p>Great Lakes conditions on your phone. Tap below to download the Android app.</p>
+    <a
+      class="download"
+      href="https://github.com/doorcountydrone/LakePulse/releases/latest/download/LakePulse.apk"
+    >Download LakePulse</a>
+    <p class="hint">After download, open the file and allow install from this source if asked.</p>
+  </main>
+</body>
+</html>
